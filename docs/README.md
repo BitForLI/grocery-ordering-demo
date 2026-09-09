@@ -1,192 +1,71 @@
-# IGA 项目说明
+# Setup and Deployment
 
-仓库布局：
+## Backend
 
-```
-├── backend/          # ASP.NET Core API（.csproj、Program.cs、Controllers、Models、Data、DTOs、Utils、Seed、Services、Migrations、wwwroot）
-├── frontend/         # React + Vite
-└── docs/             # 本文档
-```
+The API uses .NET, Entity Framework Core, Npgsql, Stripe, Resend, and Telegram. Configuration is loaded from `appsettings.json`, the environment-specific settings file, and environment variables in that order.
 
----
+Required production configuration:
 
-## 后端（`backend/`）
+- `ConnectionStrings__DefaultConnection` or `DATABASE_URL`
+- `Jwt__SigningKey`
+- `Cors__AllowedOrigins__0`, with additional origins using the next array index
+- `Stripe__SecretKey` and `Stripe__WebhookSecret`
+- Resend and Telegram credentials when those notifications are enabled
 
-### 技术栈
-
-- .NET 10，EF Core + Npgsql  
-- 入口：`backend/Program.cs`（CORS、Swagger、迁移 `MigrateAsync`、Seed、开发用 CLI 参数）  
-- 数据：`backend/Data/ApplicationDbContext.cs`，模型在 `backend/Models/`  
-- 集成服务：`backend/Services/`（Stripe、Resend、Telegram、`OrderPaidNotifier`）
-
-### 目录（要点）
-
-| 路径 | 说明 |
-|------|------|
-| `backend/Controllers/` | `AuthController`、`ProductController`、`OrderController`、`PaymentController`、`AdminProductController` |
-| `backend/DTOs/` | 请求/响应 DTO |
-| `backend/Utils/` | 后台鉴权等辅助类（如 `BackofficeAuthHelper`） |
-| `backend/Migrations/` | EF 迁移 |
-| `backend/Properties/launchSettings.json` | 本地 `http://localhost:5212`，`ASPNETCORE_ENVIRONMENT=Development` |
-
-### API 前缀
-
-所有控制器路由为 **`/api/...`**（例如 `/api/order/create`、`/api/payment/webhook`）。
-
-### 配置
-
-- 基座：`backend/appsettings.json`  
-- **生产域名（已入库）：** `backend/appsettings.Production.json` — CORS 允许 `https://www.igabeverlyhills.com` 与 `https://igabeverlyhills.com`；Stripe Checkout 成功/取消回跳至站点首页查询参数（与前端 `App.tsx` 一致）。部署后仍可用环境变量覆盖同名键。  
-- 本地密钥：`backend/appsettings.Development.json`（已在 `.gitignore`，勿提交）  
-- 生产：环境变量覆盖，常见键：
-
-`ConnectionStrings__DefaultConnection`、`Stripe__*`、`Resend__*`、`Telegram__*`、`Cors__AllowedOrigins__0`
-
-前端站点默认 Origin 见 `frontend/src/constants/site.ts`（可用 `VITE_PUBLIC_SITE_ORIGIN` 覆盖）。
-
-### Railway 环境变量与代码对应（后端）
-
-| Railway / 平台变量 | 代码中的配置键 | 说明 |
-|-------------------|----------------|------|
-| `ConnectionStrings__DefaultConnection` | `ConnectionStrings:DefaultConnection` | 主连接串；未设置时 **`Program.cs`** 会尝试解析 **`DATABASE_URL`**（插件常见注入） |
-| `DATABASE_URL` | （运行时转为 Npgsql 连接串） | 仅当上一项为空时使用 |
-| `Stripe__SecretKey` | `Stripe:SecretKey` | 与扁平名 **`STRIPE_SECRET_KEY`** 等价（后者仅在嵌套键为空时回填） |
-| `Stripe__WebhookSecret` 或 **`STRIPE_WEBHOOK_SECRET`** | `Stripe:WebhookSecret` | Webhook 签名；扁平名由 **`Program.cs`** 的 `MapStripeFlatEnvIfNeeded` 映射 |
-| `Stripe__PublishableKey` 或 **`STRIPE_PUBLISHABLE_KEY`** | `Stripe:PublishableKey` | 可选；当前结账以服务端 Checkout 为主 |
-| `Cors__AllowedOrigins__0`、`__1`、… | `Cors:AllowedOrigins[]` | 与 `appsettings.Production.json` 叠加；生产仍会额外允许 localhost 便于调试 |
-
-插件有时会附带 **`Host`**、**`Port`**、**`Username`**、**`Password`**、**`Database`** 等分拆变量：本仓库 **未读取**这些分拆项，只要 **`ConnectionStrings__DefaultConnection`** 或 **`DATABASE_URL`** 其一可用即可。
-
-### 本地运行
+Run the API and apply migrations from `backend/`:
 
 ```bash
-cd backend
 dotnet run --launch-profile http
-```
-
-Swagger（仅 Development）：`http://localhost:5212/swagger`
-
-### 数据库迁移
-
-```bash
-cd backend
 dotnet ef database update --project igaServer.csproj
 ```
 
-（若从仓库根执行：`dotnet ef database update --project backend/igaServer.csproj`）
-
-### 开发用命令行参数（仅 Development）
-
-在 **`backend/`** 目录下执行 `dotnet run`：
-
-- `dotnet run -- --clear-users` — 清空用户与订单  
-- `dotnet run -- --clear-products` — 清空商品与订单明细  
-- `dotnet run -- --resync-all-catalogs` 等 — 见 `Program.cs`
-
-### 业务要点
-
-- **注册/登录**：邮箱验证（Resend）；`name` / `email` / `password`，JSON 属性名大小写不敏感。  
-- **支付**：Stripe Checkout；Webhook 将订单置为 `Paid`；本地可 `stripe listen --forward-to localhost:5212/api/payment/webhook`。  
-- **称重退差**：`PUT /api/order/item/{itemId}/weight`，`X-Admin-Id`（Staff/Admin），已支付且有 PaymentIntent 时 **Stripe 部分退款**。  
-- **新订单 Telegram**：`POST /api/order/create` 成功后发送。  
-- **启动**：`Database.MigrateAsync()` 应用待处理迁移。
-
----
-
-## 前端（`frontend/`）
-
-### 技术栈
-
-React 19、Vite、React Router、Ant Design、Axios
-
-### 目录（要点）
-
-| 路径 | 说明 |
-|------|------|
-| `frontend/src/App.tsx` | 路由：`/` 店铺；`/admin/*`；`/staff/*`；旧 `/admin/orders` → `/staff/orders` |
-| `frontend/src/styles/globals.css` | 全局样式 |
-| `frontend/src/config/apiEnv.ts` | `VITE_API_BASE`、`VITE_API_ORIGIN` |
-| `frontend/src/constants/` | 布局、站点 Origin（`site.ts` 默认 `igabeverlyhills.com`） |
-| `frontend/src/api/` | Axios 与各 API 封装 |
-| `frontend/src/components/` | 页面级与可复用组件（含 `admin/`） |
-| `frontend/src/context/` | React Context（购物车、登录、订单模式等） |
-| `frontend/src/hooks/` | 自定义 Hooks |
-| `frontend/src/layouts/` | 后台布局壳（Admin / Staff） |
-| `frontend/src/pages/` | 路由页面（含 `admin/`） |
-| `frontend/src/types/`、`utils/` | 类型与工具函数 |
-
-路径别名：`@/` 指向 `src/`（见 `vite.config.ts`、`tsconfig.app.json`）。
-
-### 本地运行
+For local Stripe webhooks:
 
 ```bash
-cd frontend
+stripe listen --forward-to localhost:5212/api/payment/webhook
+```
+
+## Frontend
+
+The React application lives in `frontEnd/` and uses React Router, Ant Design, Axios, and Vite.
+
+```bash
+cd frontEnd
 npm install
 npm run dev
 ```
 
-默认 `http://localhost:5173`。生产构建设置 `VITE_API_BASE` 指向线上 API（路径以 `/api` 结尾）。
+Set `VITE_API_BASE` to the backend URL ending in `/api`. Vite reads this value at build time, so a Cloudflare Pages deployment must be rebuilt after it changes.
 
-### 后台入口（需对应角色登录）
+Main routes:
 
-- 管理员：`/admin`  
-- 员工：`/staff/orders`
+- `/` - customer storefront
+- `/admin` - administration
+- `/staff/orders` - fulfilment workflow
 
----
+## Deployment
 
-## 联调
+### Railway API
 
-1. PostgreSQL + 连接串 + 迁移（见上）。  
-2. 后端：`cd backend && dotnet run --launch-profile http`。  
-3. 前端：`cd frontend && npm run dev`。  
-4. Stripe 测试：Webhook Secret 与 `stripe listen` 一致；测试卡 `4242 4242 4242 4242`。
+1. Set the service root directory to `backend`.
+2. Attach PostgreSQL and provide the required environment variables.
+3. Point the Stripe webhook to `https://<api-host>/api/payment/webhook`.
+4. Redeploy after changing runtime configuration.
 
----
+### Cloudflare Pages
 
-## 部署（Railway / 类似平台）
+| Setting | Value |
+| --- | --- |
+| Root directory | `frontEnd` |
+| Build command | `npm ci && npm run build` |
+| Output directory | `dist` |
+| API setting | `VITE_API_BASE=https://<api-host>/api` |
 
-### 后端（必做：Root Directory）
+The repository includes `public/_redirects` so direct navigation to React routes works after deployment.
 
-仓库根目录下没有 `.csproj`，项目文件在 **`backend/igaServer.csproj`**。在 Railway：
+## Troubleshooting
 
-1. 打开 **后端服务** → **Settings**。  
-2. **Root directory** 填 **`backend`**（不要留空或填 `/`）。  
-3. 保存并重新部署。
-
-否则 Railpack 会在仓库根扫描，报错类似：**could not determine how to build the app**。详见 **`backend/README.md`**。
-
-可选：**Watch paths** 填 `backend/**`，避免只改前端时也触发后端构建。
-
-启动一般由 Railpack 检测 `dotnet publish` 产物；若有需要再在 Settings 里覆盖 **Start command**。
-
-### 前端静态站（Cloudflare Pages 等）
-
-| 设置项 | 建议值 |
-|--------|--------|
-| **Root directory**（根目录） | **`frontend`** 或 **`frontEnd`**（以仓库里实际文件夹名为准；不要用仓库根 `/`） |
-| **Build command** | `npm ci && npm run build`（或 `npm install && npm run build`） |
-| **Build output directory** | **`dist`** |
-| **Environment variables（生产构建）** | **`VITE_API_BASE`** = `https://你的Railway后端域名/api`；可选 **`VITE_PUBLIC_SITE_ORIGIN`**、`VITE_MAPBOX_ACCESS_TOKEN`（见 `frontend/.env.example`） |
-
-**说明：** Vite 只在 **构建时** 读取 `VITE_*`，须在 Cloudflare **Pages → Settings → Environment variables** 里为 **Production**（及 Preview 如需）配置后再触发部署。
-
-**自定义域名：** 在 Pages 项目绑定 `www` / apex，`DNS` 按向导添加即可；后端 **CORS** 需已包含这些 HTTPS Origin（见 `appsettings.Production.json` / Railway 变量）。
-
-**SPA 路由：** 仓库已包含 **`public/_redirects`**（构建后写入 `dist/`），避免直接访问 `/admin` 等路径刷新时出现 **404**。
-
-**Cloudflare 上出现「Network Error」、无法加载商品时排查：**
-
-1. **`VITE_API_BASE` 未设置或仍是 localhost**：生产包里默认会指向 `http://localhost:5212/api`，浏览器在用户电脑上访问不到你的 Railway，必然失败。在 Pages → **Environment variables** → **Production** 设置 **`VITE_API_BASE`** = `https://你的Railway后端域名/api`，保存后 **重新部署**（Redeploy）。  
-2. **`https` 与混合内容**：前端页面是 **HTTPS** 时，**`VITE_API_BASE` 也必须是 `https://`**，不要用 `http://`，否则会被浏览器拦截。  
-3. **CORS**：若站点仍是 **`*.pages.dev` 预览域名**，后端 `appsettings.Production.json` 里只有自定义域时，须在 Railway 增加变量 **`Cors__AllowedOrigins__2`**（或下一个序号）= **`https://你的项目.pages.dev`**（与浏览器地址栏 Origin **完全一致**）。自定义域上线且已在 CORS 列表中则可省略此项。
-
-### 密钥与集成（云平台填写）
-
-- **仓库已包含**：`appsettings.Production.json` 中的生产域名与 Stripe 回跳 URL；**仍需在云平台手动填写**（勿提交密钥）：PostgreSQL 连接串、`Stripe__SecretKey` / `Stripe__WebhookSecret`（或扁平名 `STRIPE_*`，见 `Program.cs`）、Resend/Telegram 等。Stripe Dashboard **Live** 中 Webhook URL 须指向 `https://你的后端域名/api/payment/webhook`。  
-- **勿提交**：`appsettings.Development.json`、任何含密钥的 `.env`。
-
----
-
-## 许可证
-
-未在仓库中声明时，以项目所有者约定为准。
+- A production frontend that still calls localhost was built without `VITE_API_BASE`.
+- Both the storefront and API must use HTTPS in production to avoid mixed-content blocking.
+- A new preview or custom domain must be included in the backend CORS origins exactly as it appears in the browser.
+- Railway reports `could not determine how to build the app` when its root directory is not set to `backend`.

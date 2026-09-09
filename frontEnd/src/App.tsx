@@ -18,7 +18,7 @@ import { CustomerManagementPage } from './pages/admin/CustomerManagementPage';
 import { CustomerDetailPage } from './pages/admin/CustomerDetailPage';
 import { DeliveryFeesSettingsPage } from './pages/admin/DeliveryFeesSettingsPage';
 import { HomeHeroSettingsPage } from './pages/admin/HomeHeroSettingsPage';
-import searchIcon from './assets/images/搜索.png';
+import searchIcon from './assets/images/search.png';
 import { useCart } from './context/CartContext';
 import { clearPendingOrderCreate, paymentAPI } from './api';
 import { useMaxWidth } from './hooks/useMediaQuery';

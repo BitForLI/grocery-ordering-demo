@@ -1,6 +1,6 @@
 import { useRightDrawer, DRAWER_MS } from '../hooks/useRightDrawer';
 import { CloseOutlined } from '@ant-design/icons';
-import pickupIcon from '../assets/images/自提点.png';
+import pickupIcon from '../assets/images/pickup.png';
 import { useOrderMode } from '../context/OrderModeContext';
 import { FulfillmentOptionsForm } from './FulfillmentOptionsForm';
 

@@ -9,7 +9,7 @@ import { useStorePublicSettings, computeDeliveryFeeAud } from '../context/StoreP
 import { FulfillmentOptionsForm } from './FulfillmentOptionsForm';
 import { DELIVERY_SUBURBS, normalizeSuburbKey } from '../constants/deliveryZones';
 import cartIcon from '../assets/images/cart.png';
-import deleteIcon from '../assets/images/删除.png';
+import deleteIcon from '../assets/images/remove.png';
 import productImage from '../assets/images/main.png';
 import { resolveProductImageUrl } from '../utils/imageUrl';
 
