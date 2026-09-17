@@ -25,8 +25,23 @@ A full-stack ordering system built for a local grocery store. Customers can brow
 - Pickup and delivery pricing by suburb
 - Stripe payment confirmation through signed webhooks
 - Staff order acceptance, preparation, pickup, and delivery handover
-- Incremental refunds when weighed products cost less than estimated
+- Partial refunds when the recorded actual weight costs less than the estimate; each line can be weighed once while the order is being prepared
 - Product, store, carousel, user, and order administration
+
+## Implementation references
+
+The [checkout page](frontEnd/src/pages/Checkout.tsx) connects customer orders
+to Stripe Checkout. The [API client](frontEnd/src/api/client.ts) attaches the
+bearer token, and [route guards](frontEnd/src/components/BackofficeRouteGuards.tsx)
+separate staff and administrator screens. Server-side permissions and order
+transitions are enforced in the [order controller](backend/Controllers/OrderController.cs).
+
+The [webhook processor](backend/Services/StripeWebhookProcessor.cs) verifies
+Stripe signatures and checks the session, order, currency, and amount before
+updating payment state. It records the state transition and event ID in a
+database transaction, then attempts notifications separately. Weight refunds
+use a Stripe idempotency key and database transaction; the Stripe call and
+database commit are not a single atomic operation.
 
 ## Local development
 
