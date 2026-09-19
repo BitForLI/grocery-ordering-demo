@@ -86,7 +86,6 @@ namespace igaServer.Controllers
             StripeConfiguration.ApiKey = stripeSecret;
             var sessionService = new SessionService();
             var updated = 0;
-            var paidNotifications = new List<(int OrderId, string? ContactEmail)>();
 
             foreach (var order in candidates)
             {
@@ -103,6 +102,7 @@ namespace igaServer.Controllers
                         session.AmountTotal != expectedAmount || string.IsNullOrWhiteSpace(session.PaymentIntentId))
                         continue;
 
+                    await using var transaction = await _context.Database.BeginTransactionAsync();
                     var affectedRows = await _context.Orders
                         .Where(o => o.Id == order.Id && o.OrderStatus == "Pending")
                         .ExecuteUpdateAsync(setters => setters
@@ -111,7 +111,12 @@ namespace igaServer.Controllers
                     if (affectedRows != 1)
                         continue;
 
-                    paidNotifications.Add((order.Id, session.CustomerDetails?.Email ?? session.CustomerEmail));
+                    OrderPaidNotificationQueue.Enqueue(
+                        _context,
+                        order.Id,
+                        session.CustomerDetails?.Email ?? session.CustomerEmail);
+                    await _context.SaveChangesAsync();
+                    await transaction.CommitAsync();
                     updated++;
                 }
                 catch (StripeException ex)
@@ -120,18 +125,44 @@ namespace igaServer.Controllers
                 }
             }
 
-            foreach (var (orderId, contactEmail) in paidNotifications)
-            {
-                await OrderPaidNotifier.TryNotifyPickupEmailAsync(
-                    _context,
-                    _resendEmail,
-                    orderId,
-                    _logger,
-                    contactEmail,
-                    _configuration["Store:PickupAddress"] ?? "IGA Beverly Hills");
-            }
-
             return updated;
+        }
+
+        [HttpGet("paid-notification-failures")]
+        public async Task<IActionResult> GetPaidNotificationFailures(CancellationToken cancellationToken)
+        {
+            if (await RequireAdminAsync() is { } denied) return denied;
+            var failures = await _context.OrderPaidNotifications.AsNoTracking()
+                .Where(x => x.DeadLetteredAtUtc != null)
+                .OrderByDescending(x => x.DeadLetteredAtUtc)
+                .Select(x => new
+                {
+                    x.Id,
+                    x.OrderId,
+                    x.Channel,
+                    x.AttemptCount,
+                    x.LastError,
+                    x.DeadLetteredAtUtc,
+                })
+                .Take(100)
+                .ToListAsync(cancellationToken);
+            return Ok(failures);
+        }
+
+        [HttpPost("paid-notification-failures/{id:long}/retry")]
+        public async Task<IActionResult> RetryPaidNotification(long id, CancellationToken cancellationToken)
+        {
+            if (await RequireAdminAsync() is { } denied) return denied;
+            var rows = await _context.OrderPaidNotifications
+                .Where(x => x.Id == id && x.DeadLetteredAtUtc != null)
+                .ExecuteUpdateAsync(setters => setters
+                    .SetProperty(x => x.AttemptCount, 0)
+                    .SetProperty(x => x.AvailableAtUtc, DateTime.UtcNow)
+                    .SetProperty(x => x.DeadLetteredAtUtc, (DateTime?)null)
+                    .SetProperty(x => x.LockedUntilUtc, (DateTime?)null)
+                    .SetProperty(x => x.LockToken, (string?)null)
+                    .SetProperty(x => x.LastError, (string?)null), cancellationToken);
+            return rows == 1 ? Ok(new { queued = true }) : NotFound();
         }
 
         [HttpGet("dashboard")]

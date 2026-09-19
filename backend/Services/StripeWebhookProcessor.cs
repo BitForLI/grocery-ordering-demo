@@ -11,21 +11,15 @@ public class StripeWebhookProcessor
 {
     private readonly ApplicationDbContext _context;
     private readonly IConfiguration _configuration;
-    private readonly IResendEmailService _resendEmail;
-    private readonly ITelegramNotificationService _telegram;
     private readonly ILogger<StripeWebhookProcessor> _logger;
 
     public StripeWebhookProcessor(
         ApplicationDbContext context,
         IConfiguration configuration,
-        IResendEmailService resendEmail,
-        ITelegramNotificationService telegram,
         ILogger<StripeWebhookProcessor> logger)
     {
         _context = context;
         _configuration = configuration;
-        _resendEmail = resendEmail;
-        _telegram = telegram;
         _logger = logger;
     }
 
@@ -124,9 +118,7 @@ public class StripeWebhookProcessor
             return (400, new { error = "Checkout session does not match the order" });
         }
 
-        var wonTransition = await ApplyPaidFromSessionAsync(order, session, stripeEvent.Id, cancellationToken);
-        if (wonTransition)
-            await NotifyPaidIfNeededAsync(orderId, session, cancellationToken);
+        await ApplyPaidFromSessionAsync(order, session, stripeEvent.Id, cancellationToken);
         return (200, null);
     }
 
@@ -150,9 +142,7 @@ public class StripeWebhookProcessor
             !SessionMatchesOrder(session, order))
             return (400, new { error = "Checkout session does not match a payable order" });
 
-        var wonTransition = await ApplyPaidFromSessionAsync(order, session, stripeEvent.Id, cancellationToken);
-        if (wonTransition)
-            await NotifyPaidIfNeededAsync(orderId, session, cancellationToken);
+        await ApplyPaidFromSessionAsync(order, session, stripeEvent.Id, cancellationToken);
 
         return (200, null);
     }
@@ -175,7 +165,7 @@ public class StripeWebhookProcessor
         return (200, null);
     }
 
-    private async Task<bool> ApplyPaidFromSessionAsync(
+    private async Task ApplyPaidFromSessionAsync(
         Order order,
         Session session,
         string stripeEventId,
@@ -198,6 +188,12 @@ public class StripeWebhookProcessor
                 .SetProperty(o => o.StripeInvoiceId, o => resolvedInvoiceId ?? o.StripeInvoiceId),
             cancellationToken);
 
+        if (affectedRows == 1)
+            OrderPaidNotificationQueue.Enqueue(
+                _context,
+                order.Id,
+                session.CustomerDetails?.Email ?? session.CustomerEmail);
+
         _context.StripeProcessedEvents.Add(new StripeProcessedEvent
         {
             Id = stripeEventId,
@@ -205,7 +201,6 @@ public class StripeWebhookProcessor
         });
         await _context.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
-        return affectedRows == 1;
     }
 
     private async Task MarkProcessedOnlyAsync(string stripeEventId, CancellationToken cancellationToken)
@@ -216,37 +211,6 @@ public class StripeWebhookProcessor
             ProcessedAtUtc = DateTime.UtcNow,
         });
         await _context.SaveChangesAsync(cancellationToken);
-    }
-
-    private async Task NotifyPaidIfNeededAsync(
-        int orderId,
-        Session session,
-        CancellationToken cancellationToken)
-    {
-        try
-        {
-            await OrderPaidNotifier.TryNotifyPickupEmailAsync(
-                _context,
-                _resendEmail,
-                orderId,
-                _logger,
-                session.CustomerDetails?.Email ?? session.CustomerEmail,
-                _configuration["Store:PickupAddress"] ?? "IGA Beverly Hills",
-                cancellationToken);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "[Webhook] Pickup email failed order {OrderId}", orderId);
-        }
-
-        try
-        {
-            await _telegram.NotifyOrderPaidAsync(orderId, cancellationToken);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "[Webhook] Telegram failed order {OrderId}", orderId);
-        }
     }
 
     private bool SessionMatchesOrder(Session session, Order order)

@@ -34,7 +34,7 @@ public class TelegramNotificationService : ITelegramNotificationService
         _logger = logger;
     }
 
-    public async Task NotifyOrderPaidAsync(int orderId, CancellationToken cancellationToken = default)
+    public async Task<bool> NotifyOrderPaidAsync(int orderId, CancellationToken cancellationToken = default)
     {
         var order = await _db.Orders
             .AsNoTracking()
@@ -45,14 +45,14 @@ public class TelegramNotificationService : ITelegramNotificationService
         if (order?.User == null)
         {
             _logger.LogWarning("[Telegram] Paid-order notification skipped: order or user missing orderId={OrderId}", orderId);
-            return;
+            return false;
         }
 
         var text = BuildOrderPaidMessage(order, order.User);
-        await SendMessageAsync(text, "order paid", orderId, cancellationToken);
+        return await SendMessageAsync(text, "order paid", orderId, cancellationToken);
     }
 
-    private async Task SendMessageAsync(string text, string logLabel, int orderId, CancellationToken cancellationToken)
+    private async Task<bool> SendMessageAsync(string text, string logLabel, int orderId, CancellationToken cancellationToken)
     {
         var token = (_configuration["Telegram:BotToken"] ?? "").Trim();
         if (string.IsNullOrEmpty(token))
@@ -60,7 +60,7 @@ public class TelegramNotificationService : ITelegramNotificationService
             _logger.LogInformation(
                 "[Telegram] Skipped {Label}: Telegram:BotToken is empty (env Telegram__BotToken or config Telegram:BotToken)",
                 logLabel);
-            return;
+            return true;
         }
 
         var chatId = await ResolveChatIdAsync(cancellationToken);
@@ -69,7 +69,7 @@ public class TelegramNotificationService : ITelegramNotificationService
             _logger.LogInformation(
                 "[Telegram] Skipped {Label}: ChatId is empty (Telegram:ChatId or StoreConfigs.TelegramChatId)",
                 logLabel);
-            return;
+            return true;
         }
 
         var url = $"https://api.telegram.org/bot{token}/sendMessage";
@@ -98,14 +98,16 @@ public class TelegramNotificationService : ITelegramNotificationService
             if (!resp.IsSuccessStatusCode)
             {
                 _logger.LogWarning("[Telegram] sendMessage failed HTTP {Status}: {Body}", (int)resp.StatusCode, body);
-                return;
+                return false;
             }
 
             _logger.LogInformation("[Telegram] {Label} sent orderId={OrderId}", logLabel, orderId);
+            return true;
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "[Telegram] {Label} error orderId={OrderId}", logLabel, orderId);
+            return false;
         }
     }
 
