@@ -1,16 +1,18 @@
-# IGA Beverly Hills Online Store
+# Grocery Ordering Workflow Demo
 
-A live grocery-ordering system that takes an order from the customer catalogue through payment, preparation, weight adjustment, refund, and final handover.
+An independently rebuilt portfolio project that follows a grocery order from the customer catalogue through payment, preparation, weight adjustment, refund, and final handover.
+
+> **Project origin:** I worked with similar grocery-ordering workflows during my software engineering internship. This repository is my own reconstruction for learning and demonstration. It is not the employer's production repository and should not be presented as the system used by the store.
 
 ## Product at a glance
 
 | | |
 | --- | --- |
-| **Users** | Grocery customers, store staff, and administrators |
+| **Users** | Example grocery customers, store staff, and administrators |
 | **Problem** | Online ordering must stay consistent while customers pay online and staff fulfil variable-weight items in store |
 | **Customer journey** | Browse -> choose pickup or delivery -> pay -> track the order |
 | **Staff journey** | Accept -> prepare -> record actual weights -> refund the difference -> hand over |
-| **Stack** | React, TypeScript, ASP.NET Core, PostgreSQL, Stripe, Railway, Cloudflare Pages |
+| **Stack** | React, TypeScript, ASP.NET Core, PostgreSQL, Stripe test mode, Railway, Cloudflare Pages |
 
 The product is more than a storefront. It connects customer actions with the operational work inside the store, including delivery zones, payment confirmation, staff permissions, actual-weight pricing, partial refunds, and notifications.
 
