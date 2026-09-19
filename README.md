@@ -1,6 +1,18 @@
 # IGA Beverly Hills Online Store
 
-A full-stack ordering system built for a local grocery store. Customers can browse the catalogue, choose pickup or delivery, pay through Stripe, and track an order. Staff use a separate workflow to accept orders, prepare items, record actual weights, and complete handover.
+A live grocery-ordering system that takes an order from the customer catalogue through payment, preparation, weight adjustment, refund, and final handover.
+
+## Product at a glance
+
+| | |
+| --- | --- |
+| **Users** | Grocery customers, store staff, and administrators |
+| **Problem** | Online ordering must stay consistent while customers pay online and staff fulfil variable-weight items in store |
+| **Customer journey** | Browse -> choose pickup or delivery -> pay -> track the order |
+| **Staff journey** | Accept -> prepare -> record actual weights -> refund the difference -> hand over |
+| **Stack** | React, TypeScript, ASP.NET Core, PostgreSQL, Stripe, Railway, Cloudflare Pages |
+
+The product is more than a storefront. It connects customer actions with the operational work inside the store, including delivery zones, payment confirmation, staff permissions, actual-weight pricing, partial refunds, and notifications.
 
 ## Stack
 
