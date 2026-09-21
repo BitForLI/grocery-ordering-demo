@@ -240,40 +240,127 @@ function HomeCartToggle({
   );
 }
 
-function SpecialCard({ product, productImage }: { product: Product; productImage: string }) {
+function useProductUnitSelection(product: Product, productImage: string) {
   const options = product.unitPriceOptions && product.unitPriceOptions.length > 0
     ? product.unitPriceOptions
     : [{ unit: product.unit || 'ea', price: Number(product.price || 0) }];
   const [selectedUnit, setSelectedUnit] = useState(options[0].unit);
-  const selected = options.find((o) => o.unit === selectedUnit) ?? options[0];
+  const selected = options.find((option) => option.unit === selectedUnit) ?? options[0];
   const priceValue = Number(selected?.price ?? product.price);
   const unitValue = selected?.unit ?? product.unit;
   const { items, addItem, removeItem } = useCart();
-  const cartLine = items.find((i) => i.productId === product.id);
+  const cartLine = items.find((item) => item.productId === product.id);
 
   const handleUnitChange = (nextUnit: string) => {
     setSelectedUnit(nextUnit);
     if (!cartLine) return;
-    const nextPrice = options.find((o) => o.unit === nextUnit)?.price ?? priceValue;
-    const cartQty = cartLine.quantity ?? 1;
-    const currentEstKg = cartLine.isWeighingRequired && cartLine.expectedWeightKg != null
-      ? Number(cartLine.expectedWeightKg) : defaultEstKgForProduct(product);
+
+    const nextPrice = options.find((option) => option.unit === nextUnit)?.price ?? priceValue;
+    const cartQuantity = cartLine.quantity ?? 1;
+    const currentWeight = cartLine.isWeighingRequired && cartLine.expectedWeightKg != null
+      ? Number(cartLine.expectedWeightKg)
+      : defaultEstKgForProduct(product);
+
     removeItem(product.id);
     if (nextUnit.toLowerCase() === 'kg') {
       addItem({
-        productId: product.id, name: product.name, price: Number(nextPrice),
-        selectedUnit: nextUnit, quantity: 1, imageUrl: product.imageUrl || productImage,
-        isWeighingRequired: true, expectedWeightKg: currentEstKg > 0 ? currentEstKg : defaultEstKgForProduct(product),
+        productId: product.id,
+        name: product.name,
+        price: Number(nextPrice),
+        selectedUnit: nextUnit,
+        quantity: 1,
+        imageUrl: product.imageUrl || productImage,
+        isWeighingRequired: true,
+        expectedWeightKg: currentWeight > 0 ? currentWeight : defaultEstKgForProduct(product),
       });
-    } else {
-      addItem({
-        productId: product.id, name: product.name, price: Number(nextPrice),
-        selectedUnit: nextUnit, quantity: cartQty > 0 ? cartQty : 1,
-        imageUrl: product.imageUrl || productImage, isWeighingRequired: false,
-      });
+      return;
     }
+
+    addItem({
+      productId: product.id,
+      name: product.name,
+      price: Number(nextPrice),
+      selectedUnit: nextUnit,
+      quantity: cartQuantity > 0 ? cartQuantity : 1,
+      imageUrl: product.imageUrl || productImage,
+      isWeighingRequired: false,
+    });
   };
 
+  return { options, selectedUnit, priceValue, unitValue, handleUnitChange };
+}
+
+function ProductPurchaseControls({
+  product,
+  productImage,
+  variant,
+}: {
+  product: Product;
+  productImage: string;
+  variant: 'special' | 'regular';
+}) {
+  const { options, selectedUnit, priceValue, unitValue, handleUnitChange } = useProductUnitSelection(product, productImage);
+  const special = variant === 'special';
+
+  return (
+    <div
+      style={{
+        width: '100%',
+        minWidth: 0,
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 'clamp(0.06rem, 0.6vw, 0.12rem)',
+        marginTop: special ? 'clamp(0.08rem, 0.8vw, 0.16rem)' : undefined,
+      }}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap', lineHeight: 1.2, minWidth: 0 }}>
+        <span
+          style={{
+            fontSize: special ? 'clamp(0.82rem, 2.5vw, 1.08rem)' : 'clamp(0.86rem, 2.6vw, 1.15rem)',
+            fontWeight: 'bold',
+            color: '#dc2626',
+            lineHeight: special ? 1.2 : undefined,
+          }}
+        >
+          ${priceValue.toFixed(2)}
+        </span>
+        {options.length > 1 ? (
+          <select
+            value={selectedUnit}
+            onClick={(event) => event.stopPropagation()}
+            onChange={(event) => {
+              event.stopPropagation();
+              handleUnitChange(event.target.value);
+            }}
+            style={{
+              border: '1px solid #d1d5db',
+              borderRadius: 6,
+              padding: '1px 3px',
+              fontSize: special ? 'clamp(0.6rem, 1.6vw, 0.74rem)' : 'clamp(0.62rem, 1.8vw, 0.78rem)',
+              background: '#fff',
+              cursor: 'pointer',
+              color: '#6b7280',
+            }}
+          >
+            {options.map((option) => <option key={option.unit} value={option.unit}>/{option.unit}</option>)}
+          </select>
+        ) : (
+          <span style={{ fontSize: special ? 'clamp(0.58rem, 1.6vw, 0.74rem)' : 'clamp(0.58rem, 1.6vw, 0.78rem)', color: '#999' }}>
+            /{unitValue}
+          </span>
+        )}
+      </div>
+      <HomeCartToggle
+        product={product}
+        productImage={productImage}
+        selectedUnit={unitValue}
+        selectedUnitPrice={priceValue}
+      />
+    </div>
+  );
+}
+
+function SpecialCard({ product, productImage }: { product: Product; productImage: string }) {
   return (
     <div
       style={{
@@ -394,81 +481,13 @@ function SpecialCard({ product, productImage }: { product: Product; productImage
             </span>
           </div>
         )}
-        <div
-          style={{
-            width: '100%',
-            minWidth: 0,
-            display: 'flex',
-            flexDirection: 'column',
-            gap: 'clamp(0.06rem, 0.6vw, 0.12rem)',
-            marginTop: 'clamp(0.08rem, 0.8vw, 0.16rem)',
-          }}
-        >
-          <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap', lineHeight: 1.2 }}>
-            <span style={{ fontSize: 'clamp(0.82rem, 2.5vw, 1.08rem)', fontWeight: 'bold', color: '#dc2626', lineHeight: 1.2 }}>
-              ${priceValue.toFixed(2)}
-            </span>
-            {options.length > 1 ? (
-              <select
-                value={selectedUnit}
-                onClick={(e) => e.stopPropagation()}
-                onChange={(e) => { e.stopPropagation(); handleUnitChange(e.target.value); }}
-                style={{ border: '1px solid #d1d5db', borderRadius: 6, padding: '1px 3px', fontSize: 'clamp(0.6rem, 1.6vw, 0.74rem)', background: '#fff', cursor: 'pointer', color: '#6b7280' }}
-              >
-                {options.map((o) => (
-                  <option key={o.unit} value={o.unit}>/{o.unit}</option>
-                ))}
-              </select>
-            ) : (
-              <span style={{ fontSize: 'clamp(0.58rem, 1.6vw, 0.74rem)', color: '#999' }}>/{unitValue}</span>
-            )}
-          </div>
-          <HomeCartToggle
-            product={product}
-            productImage={productImage}
-            selectedUnit={unitValue}
-            selectedUnitPrice={priceValue}
-          />
-        </div>
+        <ProductPurchaseControls product={product} productImage={productImage} variant="special" />
       </div>
     </div>
   );
 }
 
 export function ProductCard({ product, productImage }: { product: Product; productImage: string }) {
-  const options = product.unitPriceOptions && product.unitPriceOptions.length > 0
-    ? product.unitPriceOptions
-    : [{ unit: product.unit || 'ea', price: Number(product.price || 0) }];
-  const [selectedUnit, setSelectedUnit] = useState(options[0].unit);
-  const selected = options.find((o) => o.unit === selectedUnit) ?? options[0];
-  const priceValue = Number(selected?.price ?? product.price);
-  const unitValue = selected?.unit ?? product.unit;
-  const { items, addItem, removeItem } = useCart();
-  const cartLine = items.find((i) => i.productId === product.id);
-
-  const handleUnitChange = (nextUnit: string) => {
-    setSelectedUnit(nextUnit);
-    if (!cartLine) return;
-    const nextPrice = options.find((o) => o.unit === nextUnit)?.price ?? priceValue;
-    const cartQty = cartLine.quantity ?? 1;
-    const currentEstKg = cartLine.isWeighingRequired && cartLine.expectedWeightKg != null
-      ? Number(cartLine.expectedWeightKg) : defaultEstKgForProduct(product);
-    removeItem(product.id);
-    if (nextUnit.toLowerCase() === 'kg') {
-      addItem({
-        productId: product.id, name: product.name, price: Number(nextPrice),
-        selectedUnit: nextUnit, quantity: 1, imageUrl: product.imageUrl || productImage,
-        isWeighingRequired: true, expectedWeightKg: currentEstKg > 0 ? currentEstKg : defaultEstKgForProduct(product),
-      });
-    } else {
-      addItem({
-        productId: product.id, name: product.name, price: Number(nextPrice),
-        selectedUnit: nextUnit, quantity: cartQty > 0 ? cartQty : 1,
-        imageUrl: product.imageUrl || productImage, isWeighingRequired: false,
-      });
-    }
-  };
-
   return (
     <div
       style={{
@@ -550,33 +569,7 @@ export function ProductCard({ product, productImage }: { product: Product; produ
           {product.description?.trim() || '\u00A0'}
         </p>
 
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 'clamp(0.06rem, 0.6vw, 0.12rem)', width: '100%', minWidth: 0 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap', lineHeight: 1.2, minWidth: 0 }}>
-            <span style={{ fontSize: 'clamp(0.86rem, 2.6vw, 1.15rem)', fontWeight: 'bold', color: '#dc2626' }}>
-              ${priceValue.toFixed(2)}
-            </span>
-            {options.length > 1 ? (
-              <select
-                value={selectedUnit}
-                onClick={(e) => e.stopPropagation()}
-                onChange={(e) => { e.stopPropagation(); handleUnitChange(e.target.value); }}
-                style={{ border: '1px solid #d1d5db', borderRadius: 6, padding: '1px 3px', fontSize: 'clamp(0.62rem, 1.8vw, 0.78rem)', background: '#fff', cursor: 'pointer', color: '#6b7280' }}
-              >
-                {options.map((o) => (
-                  <option key={o.unit} value={o.unit}>/{o.unit}</option>
-                ))}
-              </select>
-            ) : (
-              <span style={{ fontSize: 'clamp(0.58rem, 1.6vw, 0.78rem)', color: '#999' }}>/{unitValue}</span>
-            )}
-          </div>
-          <HomeCartToggle
-            product={product}
-            productImage={productImage}
-            selectedUnit={unitValue}
-            selectedUnitPrice={priceValue}
-          />
-        </div>
+        <ProductPurchaseControls product={product} productImage={productImage} variant="regular" />
       </div>
     </div>
   );
