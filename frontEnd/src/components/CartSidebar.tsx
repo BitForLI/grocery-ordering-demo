@@ -6,12 +6,10 @@ import { useAuth } from '../context/AuthContext';
 import { useOrderMode } from '../context/OrderModeContext';
 import { orderAPI, paymentAPI, ApiRequestError } from '../api';
 import { useStorePublicSettings, computeDeliveryFeeAud } from '../context/StorePublicSettingsContext';
-import { FulfillmentOptionsForm } from './FulfillmentOptionsForm';
 import { DELIVERY_SUBURBS, normalizeSuburbKey } from '../constants/deliveryZones';
 import cartIcon from '../assets/images/cart.png';
-import deleteIcon from '../assets/images/remove.png';
-import productImage from '../assets/images/main.png';
-import { resolveProductImageUrl } from '../utils/imageUrl';
+import { CartItemList } from './cart/CartItemList';
+import { CheckoutFulfillmentModal } from './cart/CheckoutFulfillmentModal';
 
 export function CartSidebar({ compact = false }: { compact?: boolean }) {
   const iconPx = compact ? 24 : 32;
@@ -44,11 +42,84 @@ export function CartSidebar({ compact = false }: { compact?: boolean }) {
   const [checkoutError, setCheckoutError] = useState('');
   const [fulfillmentModalOpen, setFulfillmentModalOpen] = useState(false);
 
-  const fulfillmentModalScroll =
-    orderType === 'Delivery'
-      ? { overflowY: 'visible' as const, overflowX: 'visible' as const }
-      : { overflowY: 'auto' as const, overflowX: 'hidden' as const };
-
+  const openCheckout = () => {
+    if (!user) {
+      const msg = 'Please sign in before checkout';
+      setCheckoutError(msg);
+      message.warning(msg);
+      return;
+    }
+    setCheckoutError('');
+    setFulfillmentModalOpen(true);
+  };
+  const continueToPayment = async () => {
+    if (orderType === 'Pickup' && !pickupTimeSlot) {
+      const msg = 'Please select a pickup time slot.';
+      setCheckoutError(msg);
+      message.warning(msg);
+      return;
+    }
+    if (orderType === 'Delivery' && !deliveryInfo.address?.trim()) {
+      const msg = 'Please enter your delivery address.';
+      setCheckoutError(msg);
+      message.warning(msg);
+      return;
+    }
+    if (orderType === 'Delivery' && !isDeliverableSuburb(deliveryInfo.suburb)) {
+      const msg = `Delivery is only available to these suburbs: ${enabledDeliveryZones
+        .map((zone) => zone.displayName)
+        .join(', ')}.`;
+      setCheckoutError(msg);
+      message.warning(msg);
+      return;
+    }
+    if (!user) {
+      message.warning('Please sign in before checkout');
+      setFulfillmentModalOpen(false);
+      return;
+    }
+    setCheckoutError('');
+    setCheckoutLoading(true);
+    try {
+      if (orderType === 'Delivery') saveDeliveryAddress();
+      const deliveryAddress =
+        orderType === 'Delivery'
+          ? [deliveryInfo.address, deliveryInfo.suburb, deliveryInfo.postcode].filter(Boolean).join(', ')
+          : undefined;
+      const orderRes = (await orderAPI.create({
+        orderType,
+        pickupTime: orderType === 'Pickup' ? pickupTimeSlot : undefined,
+        deliveryAddress,
+        deliverySuburb: orderType === 'Delivery' ? deliveryInfo.suburb : undefined,
+        items: items.map((item) => ({
+          productId: item.productId,
+          quantity: item.isWeighingRequired ? 1 : item.quantity,
+          expectedWeight: item.isWeighingRequired ? Number(item.expectedWeightKg ?? 0) : 0,
+          selectedUnit: item.selectedUnit ?? (item.isWeighingRequired ? 'kg' : 'ea'),
+        })),
+      })) as { orderId?: number };
+      const orderId = orderRes?.orderId;
+      if (!orderId) throw new Error('Order creation failed');
+      const checkoutRes = (await paymentAPI.createCheckout(orderId)) as { url?: string };
+      const stripeUrl = checkoutRes?.url;
+      if (!stripeUrl) throw new Error('Could not get payment link');
+      window.location.href = stripeUrl;
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      if (err instanceof ApiRequestError) {
+        console.error(
+          '[checkout] 服务器返回:',
+          err.status,
+          err.apiData,
+          '（控制台里这一行才是原因；上面一长串 axios 堆栈没有说明文字）'
+        );
+      }
+      setCheckoutError(errorMessage);
+      message.error(errorMessage);
+    } finally {
+      setCheckoutLoading(false);
+    }
+  };
   return (
     <>
       {/* 购物车按钮 */}
@@ -148,144 +219,12 @@ export function CartSidebar({ compact = false }: { compact?: boolean }) {
             </button>
           </div>
 
-          {/* 购物车项目列表 */}
-          <div style={{ flex: 1, overflowY: 'auto', padding: '1rem' }}>
-            {items.length === 0 ? (
-              <p style={{ textAlign: 'center', color: '#999' }}>Cart is empty</p>
-            ) : (
-              items.map((item) => (
-                <div
-                  key={item.productId}
-                  style={{
-                    display: 'flex',
-                    gap: '0.75rem',
-                    padding: '0.75rem 0',
-                    borderBottom: '1px solid #f0f0f0',
-                    marginBottom: '0.75rem',
-                  }}
-                >
-                  {/* 左侧：商品图 */}
-                  <div
-                    style={{
-                      width: '60px',
-                      height: '60px',
-                      flexShrink: 0,
-                      borderRadius: '6px',
-                      overflow: 'hidden',
-                    }}
-                  >
-                    <img
-                      src={resolveProductImageUrl(item.imageUrl, productImage)}
-                      alt={item.name}
-                      style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-                    />
-                  </div>
-                  {/* 右侧：名字 + (价格与加减同行) + 删除在最右 */}
-                  <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                    <p style={{ fontWeight: 'bold', marginBottom: 0, fontSize: '0.9rem' }}>{item.name}</p>
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem' }}>
-                      <span style={{ color: '#dc2626', fontSize: '0.875rem', fontWeight: 'bold' }}>
-                        ${item.price.toFixed(2)}
-                        {item.isWeighingRequired ? '/kg' : ''}
-                      </span>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', border: '1px solid #d1d5db', borderRadius: '4px', overflow: 'hidden' }}>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            if (item.isWeighingRequired && item.expectedWeightKg != null) {
-                              const w = item.expectedWeightKg - 0.25;
-                              if (w < 0.05 - 1e-9) removeItem(item.productId);
-                              else updateExpectedWeightKg(item.productId, Math.round(w * 1000) / 1000);
-                            } else {
-                              updateQuantity(item.productId, item.quantity - 1);
-                            }
-                          }}
-                          style={{
-                            width: '28px',
-                            height: '28px',
-                            backgroundColor: 'white',
-                            border: 'none',
-                            borderRight: '1px solid #d1d5db',
-                            padding: 0,
-                            cursor: 'pointer',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            fontSize: '1.25rem',
-                            color: '#333',
-                          }}
-                        >
-                          −
-                        </button>
-                        <span
-                          style={{
-                            minWidth: '44px',
-                            height: '28px',
-                            padding: '0 4px',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            borderRight: '1px solid #d1d5db',
-                            fontWeight: 'bold',
-                            fontSize: item.isWeighingRequired ? '0.72rem' : '0.875rem',
-                          }}
-                        >
-                          {item.isWeighingRequired && item.expectedWeightKg != null
-                            ? `${item.expectedWeightKg.toFixed(2)} kg`
-                            : item.quantity}
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            if (item.isWeighingRequired && item.expectedWeightKg != null) {
-                              updateExpectedWeightKg(
-                                item.productId,
-                                Math.round((item.expectedWeightKg + 0.25) * 1000) / 1000
-                              );
-                            } else {
-                              updateQuantity(item.productId, item.quantity + 1);
-                            }
-                          }}
-                          style={{
-                            width: '28px',
-                            height: '28px',
-                            backgroundColor: 'white',
-                            border: 'none',
-                            padding: 0,
-                            cursor: 'pointer',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            fontSize: '1.25rem',
-                            color: '#333',
-                          }}
-                        >
-                          +
-                        </button>
-                        </div>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => removeItem(item.productId)}
-                        style={{
-                          backgroundColor: 'transparent',
-                          border: 'none',
-                          padding: 0,
-                          cursor: 'pointer',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                        }}
-                      >
-                        <img src={deleteIcon} alt="Remove" style={{ width: '20px', height: '20px', objectFit: 'contain' }} />
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
+          <CartItemList
+            items={items}
+            removeItem={removeItem}
+            updateQuantity={updateQuantity}
+            updateExpectedWeightKg={updateExpectedWeightKg}
+          />
 
           {/* 结账区域 */}
           {items.length > 0 && (
@@ -354,16 +293,7 @@ export function CartSidebar({ compact = false }: { compact?: boolean }) {
               )}
               <button
                 type="button"
-                onClick={() => {
-                  if (!user) {
-                    const msg = 'Please sign in before checkout';
-                    setCheckoutError(msg);
-                    message.warning(msg);
-                    return;
-                  }
-                  setCheckoutError('');
-                  setFulfillmentModalOpen(true);
-                }}
+                onClick={openCheckout}
                 disabled={checkoutLoading}
                 style={{
                   width: '100%',
@@ -402,199 +332,14 @@ export function CartSidebar({ compact = false }: { compact?: boolean }) {
         />
       )}
 
-      {fulfillmentModalOpen && (
-        <div
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="checkout-fulfillment-title"
-          style={{
-            position: 'fixed',
-            inset: 0,
-            zIndex: 1200,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            padding: 12,
-            backgroundColor: 'rgba(15, 23, 42, 0.45)',
-          }}
-          onClick={() => {
-            if (!checkoutLoading) setFulfillmentModalOpen(false);
-          }}
-        >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            style={{
-              width: 'min(420px, 100%)',
-              maxHeight: 'min(90dvh, 640px)',
-              backgroundColor: 'white',
-              borderRadius: 12,
-              boxShadow: '0 20px 50px rgba(0,0,0,0.2)',
-              display: 'flex',
-              flexDirection: 'column',
-              overflow: 'hidden',
-            }}
-          >
-            <div
-              style={{
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-                padding: '14px 16px',
-                borderBottom: '1px solid #e5e7eb',
-                flexShrink: 0,
-              }}
-            >
-              <h2 id="checkout-fulfillment-title" style={{ margin: 0, fontSize: '1.05rem', fontWeight: 600, color: '#0f172a' }}>
-                Pickup or delivery
-              </h2>
-              <button
-                type="button"
-                disabled={checkoutLoading}
-                aria-label="Close"
-                onClick={() => setFulfillmentModalOpen(false)}
-                style={{
-                  border: 'none',
-                  background: 'transparent',
-                  fontSize: '1.25rem',
-                  cursor: checkoutLoading ? 'not-allowed' : 'pointer',
-                  color: '#64748b',
-                  lineHeight: 1,
-                  padding: 4,
-                }}
-              >
-                ✕
-              </button>
-            </div>
-            <div
-              style={{
-                flex: 1,
-                minHeight: 0,
-                padding: '1rem 1.25rem',
-                ...fulfillmentModalScroll,
-              }}
-            >
-              <FulfillmentOptionsForm variant="checkoutModal" active={fulfillmentModalOpen} />
-            </div>
-            {checkoutError && (
-              <p style={{ margin: 0, padding: '0 16px 8px', fontSize: '0.8rem', color: '#dc2626' }}>{checkoutError}</p>
-            )}
-            <div
-              style={{
-                display: 'flex',
-                gap: 10,
-                padding: '12px 16px',
-                borderTop: '1px solid #e5e7eb',
-                flexShrink: 0,
-              }}
-            >
-              <button
-                type="button"
-                disabled={checkoutLoading}
-                onClick={() => setFulfillmentModalOpen(false)}
-                style={{
-                  flex: 1,
-                  padding: '10px 12px',
-                  borderRadius: 8,
-                  border: '1px solid #e5e7eb',
-                  background: 'white',
-                  fontWeight: 600,
-                  cursor: checkoutLoading ? 'not-allowed' : 'pointer',
-                  color: '#334155',
-                }}
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                disabled={checkoutLoading}
-                onClick={async () => {
-                  if (orderType === 'Pickup' && !pickupTimeSlot) {
-                    const msg = 'Please select a pickup time slot.';
-                    setCheckoutError(msg);
-                    message.warning(msg);
-                    return;
-                  }
-                  if (orderType === 'Delivery' && !deliveryInfo.address?.trim()) {
-                    const msg = 'Please enter your delivery address.';
-                    setCheckoutError(msg);
-                    message.warning(msg);
-                    return;
-                  }
-                  if (orderType === 'Delivery' && !isDeliverableSuburb(deliveryInfo.suburb)) {
-                    const msg = `Delivery is only available to these suburbs: ${enabledDeliveryZones
-                      .map((zone) => zone.displayName)
-                      .join(', ')}.`;
-                    setCheckoutError(msg);
-                    message.warning(msg);
-                    return;
-                  }
-                  if (!user) {
-                    message.warning('Please sign in before checkout');
-                    setFulfillmentModalOpen(false);
-                    return;
-                  }
-                  setCheckoutError('');
-                  setCheckoutLoading(true);
-                  try {
-                    if (orderType === 'Delivery') saveDeliveryAddress();
-                    const deliveryAddress =
-                      orderType === 'Delivery'
-                        ? [deliveryInfo.address, deliveryInfo.suburb, deliveryInfo.postcode].filter(Boolean).join(', ')
-                        : undefined;
-                    const orderRes = (await orderAPI.create({
-                      orderType: orderType,
-                      pickupTime: orderType === 'Pickup' ? pickupTimeSlot : undefined,
-                      deliveryAddress: deliveryAddress,
-                      deliverySuburb: orderType === 'Delivery' ? deliveryInfo.suburb : undefined,
-                      items: items.map((i) => ({
-                        productId: i.productId,
-                        quantity: i.isWeighingRequired ? 1 : i.quantity,
-                        expectedWeight: i.isWeighingRequired ? Number(i.expectedWeightKg ?? 0) : 0,
-                        selectedUnit: i.selectedUnit ?? (i.isWeighingRequired ? 'kg' : 'ea'),
-                      })),
-                    })) as { orderId?: number };
-                    const orderId = orderRes?.orderId;
-                    if (!orderId) throw new Error('Order creation failed');
-                    const checkoutRes = (await paymentAPI.createCheckout(orderId)) as { url?: string };
-                    const stripeUrl = checkoutRes?.url;
-                    if (stripeUrl) {
-                      window.location.href = stripeUrl;
-                    } else {
-                      throw new Error('Could not get payment link');
-                    }
-                  } catch (err) {
-                    const m = err instanceof Error ? err.message : String(err);
-                    if (err instanceof ApiRequestError) {
-                      console.error(
-                        '[checkout] 服务器返回:',
-                        err.status,
-                        err.apiData,
-                        '（控制台里这一行才是原因；上面一长串 axios 堆栈没有说明文字）'
-                      );
-                    }
-                    setCheckoutError(m);
-                    message.error(m);
-                  } finally {
-                    setCheckoutLoading(false);
-                  }
-                }}
-                style={{
-                  flex: 1,
-                  padding: '10px 12px',
-                  borderRadius: 8,
-                  border: 'none',
-                  background: checkoutLoading ? '#fca5a5' : '#dc2626',
-                  color: 'white',
-                  fontWeight: 600,
-                  cursor: checkoutLoading ? 'not-allowed' : 'pointer',
-                }}
-              >
-                {checkoutLoading ? 'Redirecting…' : 'Continue to payment'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <CheckoutFulfillmentModal
+        open={fulfillmentModalOpen}
+        checkoutLoading={checkoutLoading}
+        checkoutError={checkoutError}
+        orderType={orderType}
+        onClose={() => setFulfillmentModalOpen(false)}
+        onContinue={continueToPayment}
+      />
     </>
   );
 }
