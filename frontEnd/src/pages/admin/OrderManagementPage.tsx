@@ -1,105 +1,13 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { Table, Button, message, Modal, Input, Select } from 'antd';
-import type { ColumnsType } from 'antd/es/table';
 import { useNavigate, useOutletContext } from 'react-router-dom';
 import { apiClient } from '../../api/client';
 import { useAuth } from '../../context/AuthContext';
-import { DELIVERY_SUBURBS, formatDeliverySuburbDisplay, suburbToKey } from '../../constants/deliveryZones';
+import { DELIVERY_SUBURBS, suburbToKey } from '../../constants/deliveryZones';
 
-const BROADCAST_KEY = 'iga_order_broadcast_enabled';
-
-// 播放新订单提示音（循环），返回停止函数；需用户点击启用（浏览器自动播放策略）
-function useOrderAlertSound() {
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const ctxRef = useRef<AudioContext | null>(null);
-
-  const playBeep = useCallback(() => {
-    try {
-      const AudioContextConstructor = window.AudioContext ||
-        (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-      if (!AudioContextConstructor) return;
-      const ctx = ctxRef.current || new AudioContextConstructor();
-      if (ctx.state === 'suspended') ctx.resume();
-      ctxRef.current = ctx;
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      osc.frequency.value = 880;
-      osc.type = 'sine';
-      gain.gain.setValueAtTime(0.2, ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.3);
-      osc.start(ctx.currentTime);
-      osc.stop(ctx.currentTime + 0.3);
-    } catch {
-      // Audio is best-effort; unsupported or blocked contexts should not break order polling.
-    }
-  }, []);
-
-  const play = useCallback(() => {
-    playBeep();
-    if (intervalRef.current) clearInterval(intervalRef.current);
-    intervalRef.current = setInterval(playBeep, 1000);
-  }, [playBeep]);
-
-  const stop = useCallback(() => {
-    if (intervalRef.current) {
-      clearInterval(intervalRef.current);
-      intervalRef.current = null;
-    }
-  }, []);
-
-  const [enabled, setEnabled] = useState(() => typeof window !== 'undefined' && localStorage.getItem(BROADCAST_KEY) === '1');
-  const enable = useCallback(() => {
-    playBeep();
-    stop();
-    localStorage.setItem(BROADCAST_KEY, '1');
-    setEnabled(true);
-  }, [playBeep, stop]);
-
-  return { play, stop, enable, isEnabled: enabled };
-}
-
-/** 履约订单：待支付 → 待接单 → 备货 → 待取/待送 → 已完成（已取/已交接） */
-const TAB_ITEMS = [
-  { key: 'Pending', label: 'Awaiting payment' },
-  { key: 'Paid', label: 'To accept' },
-  { key: 'Preparing', label: 'Preparing' },
-  { key: 'PreparedPickup', label: 'Ready for pickup' },
-  { key: 'PreparedDelivery', label: 'Ready for delivery' },
-  { key: 'CompletedPickup', label: 'Completed (pickup)' },
-  { key: 'CompletedDelivery', label: 'Completed (delivery)' },
-  { key: 'RefundRequested', label: 'Refund requests' },
-] as const;
-
-function resolveTabParams(tab: string | undefined): { status?: string; orderType?: string; pickedUp?: boolean } {
-  if (!tab) return { status: 'Pending' };
-  if (tab === 'PreparedPickup') return { status: 'Prepared', orderType: 'Pickup', pickedUp: false };
-  if (tab === 'PreparedDelivery') return { status: 'Prepared', orderType: 'Delivery', pickedUp: false };
-  if (tab === 'CompletedPickup') return { status: 'Prepared', orderType: 'Pickup', pickedUp: true };
-  if (tab === 'CompletedDelivery') return { status: 'Prepared', orderType: 'Delivery', pickedUp: true };
-  if (tab === 'Pending' || tab === 'Paid' || tab === 'Preparing' || tab === 'RefundRequested') return { status: tab };
-  return { status: 'Pending' };
-}
-
-type OrderTabKey = (typeof TAB_ITEMS)[number]['key'];
-
-interface OrderRow {
-  id: number;
-  userId: number;
-  userName: string;
-  userPhone: string;
-  totalAmount: number;
-  finalAmount?: number;
-  orderStatus: string;
-  orderType: string;
-  pickupTime?: string;
-  pickupCode?: string;
-  deliveryAddress?: string;
-  deliverySuburb?: string;
-  createdAt: string;
-  pickedUpAt?: string | null;
-}
+import { BROADCAST_KEY, useOrderAlertSound } from '../../hooks/useOrderAlertSound';
+import { buildOrderManagementColumns } from './orderManagementColumns';
+import { TAB_ITEMS, resolveTabParams, type OrderRow, type OrderTabKey } from './orderManagement';
 
 interface OrderManagementPageProps {
   initialTab?: OrderTabKey;
@@ -401,176 +309,21 @@ export function OrderManagementPage({ initialTab = 'Pending', visibleTabKeys }: 
     }
   };
 
-  const columns: ColumnsType<OrderRow> = [
-    {
-      title: 'Order #',
-      dataIndex: 'id',
-      key: 'id',
-      width: 90,
-      render: (id: number) => (
-        <Button type="link" onClick={() => navigate(`${adminBasePath}/orders/${id}`)} style={{ padding: 0 }}>
-          #{id}
-        </Button>
-      ),
-    },
-    {
-      title: 'Date',
-      dataIndex: 'createdAt',
-      key: 'createdAt',
-      width: 180,
-      render: (v: string) => (v ? new Date(v).toLocaleString() : '-'),
-    },
-    { title: 'Customer', key: 'user', render: (_, r) => (r.userName && r.userPhone ? `${r.userName} (${r.userPhone})` : (r.userName || r.userPhone || '-')) },
-    {
-      title: 'Type',
-      key: 'orderType',
-      width: 90,
-      render: (_: unknown, r: OrderRow) => (r.orderType === 'Pickup' ? 'Pickup' : r.orderType === 'Delivery' ? 'Delivery' : r.orderType || '-'),
-    },
-    {
-      title: 'Code / Area',
-      key: 'codeOrArea',
-      width: 100,
-      render: (_: unknown, r: OrderRow) =>
-        r.orderType === 'Pickup' ? (r.pickupCode || '—') : r.orderType === 'Delivery' ? formatDeliverySuburbDisplay(r.deliverySuburb) : '—',
-    },
-    {
-      title: 'Pickup / Delivery',
-      key: 'pickupOrDelivery',
-      width: 160,
-      render: (_: unknown, r: OrderRow) => {
-        if (r.pickedUpAt) {
-          const t = new Date(r.pickedUpAt).toLocaleString('en-AU', {
-            month: 'numeric',
-            day: 'numeric',
-            hour: '2-digit',
-            minute: '2-digit',
-          });
-          return <span style={{ color: '#059669' }}>Done {t}</span>;
-        }
-        if (r.orderType === 'Pickup' && r.pickupTime) {
-          return new Date(r.pickupTime).toLocaleString('zh-CN', {
-            month: 'numeric',
-            day: 'numeric',
-            hour: '2-digit',
-            minute: '2-digit',
-          });
-        }
-        if (r.orderType === 'Delivery' && r.deliveryAddress) {
-          return r.deliveryAddress.length > 12 ? `${r.deliveryAddress.slice(0, 12)}…` : r.deliveryAddress;
-        }
-        return '-';
-      },
-    },
-    {
-      title: 'Total',
-      dataIndex: 'totalAmount',
-      key: 'totalAmount',
-      width: 100,
-      render: (v: number, r) => `$${(r.finalAmount ?? v ?? 0).toFixed(2)}`,
-    },
-    ...(isRefundsOnlyPage
-      ? [
-          {
-            title: 'Status',
-            key: 'status',
-            width: 120,
-            render: (_: unknown, r: OrderRow) => (
-              <span
-                style={{
-                  fontSize: 12,
-                  padding: '0.2rem 0.45rem',
-                  borderRadius: 999,
-                  backgroundColor:
-                    r.orderStatus === 'RefundRequested'
-                      ? '#fee2e2'
-                      : r.orderStatus === 'Refunded'
-                        ? '#dcfce7'
-                        : r.orderStatus === 'Completed'
-                          ? '#e0f2fe'
-                          : '#f3f4f6',
-                  color:
-                    r.orderStatus === 'RefundRequested'
-                      ? '#991b1b'
-                      : r.orderStatus === 'Refunded'
-                        ? '#166534'
-                        : r.orderStatus === 'Completed'
-                          ? '#075985'
-                          : '#374151',
-                }}
-              >
-                {r.orderStatus}
-              </span>
-            ),
-          },
-        ]
-      : []),
-    {
-      title: 'Actions',
-      key: 'action',
-      width: 220,
-      render: (_, r) => (
-        <span style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-          {r.orderStatus === 'Pending' && (
-            <span style={{ fontSize: 12, color: '#d97706' }}>Awaiting payment</span>
-          )}
-          {r.orderStatus === 'RefundRequested' && (
-            <>
-              {isAdmin && (
-                <Button
-                  danger
-                  size="small"
-                  loading={refundingId === r.id}
-                  onClick={() => handleApproveRefund(r.id)}
-                >
-                  Approve refund
-                </Button>
-              )}
-              <Button
-                size="small"
-                loading={rejectingId === r.id}
-                onClick={() => handleRejectRefund(r.id)}
-              >
-                Reject refund
-              </Button>
-            </>
-          )}
-          {r.orderStatus === 'Paid' && (
-            <Button
-              type="primary"
-              size="small"
-              loading={acceptingId === r.id}
-              onClick={() => handleAcceptOrder(r.id)}
-            >
-              Accept
-            </Button>
-          )}
-          {r.orderStatus === 'Preparing' && (
-            <Button
-              size="small"
-              loading={readyId === r.id}
-              onClick={() => handleMarkReady(r.id, r.orderType)}
-            >
-              Ready
-            </Button>
-          )}
-          {r.orderStatus === 'Prepared' && !r.pickedUpAt && (
-            <Button
-              size="small"
-              loading={pickedUpId === r.id}
-              onClick={() => handleMarkPickedUp(r.id, r.orderType)}
-            >
-              {r.orderType === 'Delivery' ? 'Handed off' : 'Picked up'}
-            </Button>
-          )}
-          {r.orderStatus === 'Prepared' && r.pickedUpAt && (
-            <span style={{ fontSize: 12, color: '#059669', fontWeight: 600 }}>Completed</span>
-          )}
-        </span>
-      ),
-    },
-  ];
-
+  const columns = buildOrderManagementColumns({
+    isAdmin,
+    isRefundsOnlyPage,
+    acceptingId,
+    refundingId,
+    rejectingId,
+    readyId,
+    pickedUpId,
+    onOpenOrder: (orderId) => navigate(`${adminBasePath}/orders/${orderId}`),
+    onApproveRefund: handleApproveRefund,
+    onRejectRefund: handleRejectRefund,
+    onAcceptOrder: handleAcceptOrder,
+    onMarkReady: handleMarkReady,
+    onMarkPickedUp: handleMarkPickedUp,
+  });
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
