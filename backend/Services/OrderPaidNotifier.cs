@@ -8,7 +8,7 @@ namespace IGA.Services;
 /// <summary>订单标记为已支付后发送取件码/确认邮件（非 guest、需可投递邮箱）。</summary>
 public static class OrderPaidNotifier
 {
-    public static async Task TryNotifyPickupEmailAsync(
+    public static async Task<bool> TryNotifyPickupEmailAsync(
         ApplicationDbContext db,
         IResendEmailService resend,
         int orderId,
@@ -24,12 +24,12 @@ public static class OrderPaidNotifier
         if (order?.User == null)
         {
             logger.LogWarning("[OrderPaid] Order {OrderId} or user missing", orderId);
-            return;
+            return false;
         }
 
         var addr = ChooseCustomerEmail(paymentContactEmail, order.User.Email);
         if (string.IsNullOrEmpty(addr) || addr.EndsWith("@iga.local", StringComparison.OrdinalIgnoreCase))
-            return;
+            return true;
 
         var name = order.User.Name ?? "Customer";
         var code = order.PickupCode ?? "";
@@ -46,6 +46,7 @@ public static class OrderPaidNotifier
 
         if (ok)
             logger.LogInformation("[OrderPaid] Pickup email sent for order {OrderId}", orderId);
+        return ok;
     }
 
     private static string? ChooseCustomerEmail(string? paymentContactEmail, string? registeredEmail)

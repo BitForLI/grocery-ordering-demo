@@ -283,6 +283,7 @@ builder.Services.AddScoped<IGA.Services.ITelegramNotificationService, IGA.Servic
 builder.Services.AddScoped<IGA.Services.StripeWebhookProcessor>();
 builder.Services.AddScoped<IGA.Services.IOrderCompletionReceiptSender, IGA.Services.OrderCompletionReceiptSender>();
 builder.Services.AddHostedService<IGA.Services.OrderCompletionReceiptHostedService>();
+builder.Services.AddHostedService<IGA.Services.OrderPaidNotificationHostedService>();
 
 var app = builder.Build();
 

@@ -7,6 +7,6 @@ namespace IGA.Services;
 /// </summary>
 public interface ITelegramNotificationService
 {
-    /// <summary>Called after the order is marked paid (webhook / sync). Includes packing hints; no-op if not configured.</summary>
-    Task NotifyOrderPaidAsync(int orderId, CancellationToken cancellationToken = default);
+    /// <summary>Returns false on a delivery error; an unconfigured optional channel is a successful no-op.</summary>
+    Task<bool> NotifyOrderPaidAsync(int orderId, CancellationToken cancellationToken = default);
 }

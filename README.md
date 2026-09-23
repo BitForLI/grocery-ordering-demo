@@ -29,6 +29,7 @@ The product is more than a storefront. It connects customer actions with the ope
 | Path | Purpose |
 | --- | --- |
 | [`backend/`](backend/) | ASP.NET Core API, domain models, services, and EF migrations |
+| [`backend.tests/`](backend.tests/) | Notification queue integration tests using an in-memory SQLite database |
 | [`frontEnd/`](frontEnd/) | Customer, staff, and admin web interfaces |
 | [`docs/`](docs/) | Local setup and deployment notes |
 
@@ -38,6 +39,7 @@ The product is more than a storefront. It connects customer actions with the ope
 - Catalogue search and category filters
 - Pickup and delivery pricing by suburb
 - Stripe payment confirmation through signed webhooks
+- Durable paid-order email and Telegram delivery with background retries and a dead-letter queue
 - Staff order acceptance, preparation, pickup, and delivery handover
 - Partial refunds when the recorded actual weight costs less than the estimate; each line can be weighed once while the order is being prepared
 - Product, store, carousel, user, and order administration
@@ -52,10 +54,16 @@ transitions are enforced in the [order controller](backend/Controllers/OrderCont
 
 The [webhook processor](backend/Services/StripeWebhookProcessor.cs) verifies
 Stripe signatures and checks the session, order, currency, and amount before
-updating payment state. It records the state transition and event ID in a
-database transaction, then attempts notifications separately. Weight refunds
-use a Stripe idempotency key and database transaction; the Stripe call and
-database commit are not a single atomic operation.
+updating payment state. The paid transition, processed Stripe event, and two
+notification records are committed together. A
+[background worker](backend/Services/OrderPaidNotificationHostedService.cs)
+leases each record, retries failed email or Telegram delivery with exponential
+backoff, and moves it to a dead-letter state after eight attempts. Admin-only
+endpoints list those failures and requeue a selected delivery. The delivery is
+at-least-once: a process crash after an external provider accepts a message but
+before the database update can produce a duplicate. Weight refunds use a Stripe
+idempotency key and database transaction; the Stripe call and database commit
+are not a single atomic operation.
 
 ## Local development
 
@@ -75,3 +83,9 @@ npm run dev
 The frontend defaults to `http://localhost:5173`; the development API and Swagger UI run on `http://localhost:5212`.
 
 See [`docs/README.md`](docs/README.md) for configuration and deployment details.
+
+Run the notification workflow tests with:
+
+```bash
+dotnet test backend.tests/igaServer.Tests.csproj
+```

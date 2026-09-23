@@ -18,6 +18,7 @@ namespace igaServer.Data
         public DbSet<StoreCarouselImage> StoreCarouselImages { get; set; }
         public DbSet<ProductImage> ProductImages { get; set; }
         public DbSet<StripeProcessedEvent> StripeProcessedEvents { get; set; }
+        public DbSet<OrderPaidNotification> OrderPaidNotifications { get; set; }
         public DbSet<AdminAuditLog> AdminAuditLogs { get; set; }
 
         public DbSet<PendingRegistration> PendingRegistrations { get; set; }
@@ -38,6 +39,13 @@ namespace igaServer.Data
 
             modelBuilder.Entity<AdminAuditLog>()
                 .HasIndex(x => x.CreatedAtUtc);
+
+            modelBuilder.Entity<OrderPaidNotification>(entity =>
+            {
+                entity.HasIndex(x => new { x.OrderId, x.Channel }).IsUnique();
+                entity.HasIndex(x => new { x.AvailableAtUtc, x.LockedUntilUtc });
+                entity.HasOne(x => x.Order).WithMany().HasForeignKey(x => x.OrderId).OnDelete(DeleteBehavior.Cascade);
+            });
 
             modelBuilder.Entity<Product>()
                 .HasIndex(p => p.StripeProductId)

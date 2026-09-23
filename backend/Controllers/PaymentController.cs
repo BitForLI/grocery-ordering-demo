@@ -20,8 +20,6 @@ namespace igaServer.Controllers
         private readonly IStripeService _stripeService;
         private readonly IConfiguration _configuration;
         private readonly ApplicationDbContext _context;
-        private readonly IResendEmailService _resendEmail;
-        private readonly ITelegramNotificationService _telegram;
         private readonly StripeWebhookProcessor _webhookProcessor;
         private readonly ILogger<PaymentController> _logger;
 
@@ -29,16 +27,12 @@ namespace igaServer.Controllers
             IStripeService stripeService,
             IConfiguration configuration,
             ApplicationDbContext context,
-            IResendEmailService resendEmail,
-            ITelegramNotificationService telegram,
             StripeWebhookProcessor webhookProcessor,
             ILogger<PaymentController> logger)
         {
             _stripeService = stripeService;
             _configuration = configuration;
             _context = context;
-            _resendEmail = resendEmail;
-            _telegram = telegram;
             _webhookProcessor = webhookProcessor;
             _logger = logger;
         }
@@ -332,6 +326,7 @@ namespace igaServer.Controllers
                     });
                 }
 
+                await using var transaction = await _context.Database.BeginTransactionAsync(HttpContext.RequestAborted);
                 var pendingOrderQuery = _context.Orders
                     .Where(o => o.Id == orderId && o.OrderStatus == "Pending");
                 var updatedRows = string.IsNullOrWhiteSpace(session.PaymentIntentId)
@@ -359,30 +354,12 @@ namespace igaServer.Controllers
                     });
                 }
 
-                try
-                {
-                    await OrderPaidNotifier.TryNotifyPickupEmailAsync(
-                        _context,
-                        _resendEmail,
-                        orderId,
-                        _logger,
-                        session.CustomerDetails?.Email ?? session.CustomerEmail,
-                        _configuration["Store:PickupAddress"] ?? "IGA Beverly Hills",
-                        HttpContext.RequestAborted);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogWarning(ex, "[Payment] 取件码邮件发送失败 order {OrderId}", orderId);
-                }
-
-                try
-                {
-                    await _telegram.NotifyOrderPaidAsync(orderId, HttpContext.RequestAborted);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogWarning(ex, "[Payment] Telegram paid-order notification failed order {OrderId}", orderId);
-                }
+                OrderPaidNotificationQueue.Enqueue(
+                    _context,
+                    orderId,
+                    session.CustomerDetails?.Email ?? session.CustomerEmail);
+                await _context.SaveChangesAsync(HttpContext.RequestAborted);
+                await transaction.CommitAsync(HttpContext.RequestAborted);
 
                 return Ok(new { orderStatus = "Paid", synced = true });
             }
