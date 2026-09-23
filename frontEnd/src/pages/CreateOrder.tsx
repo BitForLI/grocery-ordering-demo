@@ -51,11 +51,7 @@ export function CreateOrder() {
       });
 
       const orderData = orderRes.orderId || 0;
-      
-      // 创建 Checkout Session
       await paymentAPI.createCheckout(orderData);
-      
-      console.log('订单已创建，ID:', orderData);
     } catch (err) {
       setError((err as Error).message);
     } finally {
